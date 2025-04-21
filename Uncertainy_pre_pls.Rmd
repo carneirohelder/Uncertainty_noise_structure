@@ -1,0 +1,304 @@
+---
+title: "Uncertainty estimation of predictions of PLS-DA applied to 2D simulations"
+author: "Helder Carneiro"
+date: "2025-04-02"
+output:
+   html_document: default
+---
+
+```{r packages , warning=F, message=FALSE,  cache=TRUE}
+windowsFonts(A = windowsFont("DejaVu Sans")) 
+palette("Tableau10")
+library(caret)
+library(kernlab)    
+library(MASS)
+library(dplyr)
+```
+
+```{r functions, cache=TRUE }
+source("predict_with_uncertainty_parallel_v2.R")
+source("predict_noise_confidence_interval.R")
+source("classify_sample_with_limits.R")
+source("plot_functions.R")
+```
+
+```{r 2D data simulations , cache=TRUE}
+set.seed(1234)
+n_points <- 10  # Number of points per class
+n_replicates <- 5  # Number of replicates 
+noise_sd <- 0.1  # Standard deviation 
+rho <- 0 # Correlation coefficient
+
+# Define the covariance matrix
+cov_matrix <- matrix(c(noise_sd^2, rho * noise_sd^2, 
+                       rho * noise_sd^2, noise_sd^2), nrow = 2)
+
+# Function to generate 2D points with correlated noise
+generate_class <- function(n_points, n_replicates, center_x, center_y, cov_matrix) {
+  points <- matrix(0, nrow = n_points * n_replicates, ncol = 2)
+  
+  for (i in 1:n_points) {
+    base_point <- c(center_x + rnorm(1, 0, 0.2), center_y + rnorm(1, 0, 0.2)) 
+    
+    for (j in 1:n_replicates) {
+      noise <- mvrnorm(1, mu = c(0, 0), Sigma = cov_matrix)  # Correlated noise
+      points[(i - 1) * n_replicates + j, ] <- base_point + noise 
+    }
+  }
+  return(points)
+}
+
+class1 <- generate_class(n_points, n_replicates, center_x = 0.8, center_y = 1.6, cov_matrix)
+class2 <- generate_class(n_points, n_replicates, center_x = 1.3, center_y = 1.2, cov_matrix)
+
+data <- data.frame(
+  Class = factor(rep(c("Class 1", "Class 2"), each = n_points * n_replicates)),
+  Sample_ID = rep(1:(2 * n_points), each = n_replicates),
+  X1 = c(class1[, 1], class2[, 1]),
+  X2 = c(class1[, 2], class2[, 2])
+)
+
+# Mean center the data
+data$X1 <- data$X1 - mean(data$X1)
+data$X2 <- data$X2 - mean(data$X2)
+
+# Calculate the mean and standard deviation of each sample
+mean_data <- aggregate(cbind(X1, X2) ~ Class + Sample_ID, data = data, FUN = mean)
+sd_data <- aggregate(cbind(X1, X2) ~ Class + Sample_ID, data = data, FUN = sd)
+
+rm(class1, class2)
+
+```
+
+```{r PLSDA model fitting, cache = TRUE}
+pls_model <- train(y = data$Class,
+                   x = data[,3:4], 
+                   method = "pls")
+```
+
+```{r uncertainty estimation, cache = TRUE}
+loc_pred <- predict_with_uncertainty_parallel(data[,-1],
+                                                pls_model,
+                                                n_sim = 500,
+                                                return_simulations = T)
+
+```
+
+```{r uncertainty results, cache = TRUE}
+
+loc_pred_results <- Reduce(rbind, lapply(loc_pred, function(x) {
+  Reduce(cbind, x[names(x) != "sim_X"])
+}))
+
+colnames(loc_pred_results) <- names(loc_pred[[1]])[-7]
+
+
+loc_pred_results <- data.frame((loc_pred_results))
+
+loc_pred_results$y_mean <- round(as.numeric(loc_pred_results$y_mean), digits = 4)
+loc_pred_results$y_sd <- round(as.numeric(loc_pred_results$y_sd), digits = 4)
+loc_pred_results$area_above_0 <- round(as.numeric(loc_pred_results$area_above_0), digits = 2)
+loc_pred_results$area_below_0 <- round(as.numeric(loc_pred_results$area_below_0), digits = 2)
+
+loc_pred_results
+```
+
+```{r  fig.width= 7.5, fig.height=2.5, fig.align="center", dpi =900, echo = F}
+
+layout_matrix <- matrix(1:3,
+                        nrow = 1,
+                        byrow = F)
+
+layout(layout_matrix)
+
+op <- par(family = "A")
+par(mgp = c(1.5, 0.5, 0)) 
+par(mar = c(3,3,1,1))
+
+plot_a(data,mean_data)
+model <- pls_model
+model_slope <- -model$finalModel$coefficients[1,1,] / model$finalModel$coefficients[2,1,]
+
+plot(data$X1,
+       data$X2,
+       type = 'n',
+       xlim = c(-1,1),
+       ylim = c(-1,1),
+       xlab = "X1", 
+       ylab = "X2",
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1)
+  abline(v = 0, h = 0, col = "gray95")
+  
+  abline(a=0,b=model_slope, col = "black", lwd = 1)
+
+  
+  for (i in 1:nrow(mean_data)){
+    p <- round(runif(50, min = 1, max = 500))
+    points(loc_pred[[i]][["sim_X"]][,1],
+         loc_pred[[i]][["sim_X"]][,2],
+         pch = 16,
+         cex = 0.3,
+         col = scales::alpha(palette()[as.numeric(mean_data$Class)[i]], 0.5))
+    
+    segments(x0=rep(mean_data$X1[i], each = 50),
+             y0=rep(mean_data$X2[i], each = 50),
+             x1=loc_pred[[i]][["sim_X"]][p,1],
+             y1=loc_pred[[i]][["sim_X"]][p,2],
+             col = scales::alpha(palette()[as.numeric(mean_data$Class)[i]], 0.3),
+             lwd = 1)
+  }
+  
+  points(mean_data$X1,
+         mean_data$X2,
+         pch = 24,
+         cex = 1.5,
+         col = "gray10",
+         bg = mean_data$Class)
+
+n_samples_class <- as.numeric(table(mean_data$Class))
+
+n_samples <- max(n_samples_class)
+
+color <- palette()[rep(1:2, each = 10)]
+
+plot(1:n_samples,
+       c(1:n_samples),
+       type = "n",
+       xlab = expression(italic(hat(y)), family = "Helvetica-Oblique"),
+       ylab = "Samples",
+       ylim= c(1,max(n_samples_class)*1.2),
+       xlim = c(-1,1),
+      # yaxt = c(1:max(n_samples_class)),
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1
+  )
+  
+  abline(v = 0, col = "black")
+  
+    up_lim <- loc_pred_results$y_mean + 2*loc_pred_results$y_sd
+    bot_lim <- loc_pred_results$y_mean - 2*loc_pred_results$y_sd
+
+     
+    arrows(x0 = bot_lim,
+           x1 = up_lim,
+           y0 = rep(1:10, 2),
+           y1 = rep(1:10, 2),
+           col = scales::alpha(color, 0.6),
+           code = 3,
+           angle = 90,
+           length = 0.05)
+     
+    points(loc_pred_results$y_mean,
+           rep(1:10, 2),
+           pch = 24,
+           cex = 1.5,
+           col = "gray10",
+           bg = color)
+
+
+
+```
+
+```{r global_limits , cache = TRUE}
+global_limits <- predict_noise_confidence_interval(pls_model, data$Sample_ID, n_sim = 500, return_simulations = T)
+data.frame(global_limits$lower,
+           global_limits$upper)
+```
+
+```{r }
+global_pred <- classify_sample_with_limits(mean_data[,3:4], pls_model, global_limits$upper)
+global_pred
+```
+
+```{r fig.width=6, fig.height=3, fig.align="center", dpi =900, echo = F}
+
+layout_matrix <- matrix(1:2,
+                        nrow = 1,
+                        byrow = F)
+
+layout(layout_matrix)
+
+op <- par(family = "A")
+par(mgp = c(1.5, 0.5, 0)) 
+par(mar = c(3,3,1,1))
+
+
+model <- pls_model
+model_slope <- -model$finalModel$coefficients[1,1,] / model$finalModel$coefficients[2,1,]
+
+plot(data$X1,
+       data$X2,
+       type = 'n',
+       xlim = c(-1,1),
+       ylim = c(-1,1),
+       xlab = "X1", 
+       ylab = "X2",
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1)
+  abline(v = 0, h = 0, col = "gray95")
+  points(global_limits$sim_X[,1],
+         global_limits$sim_X[,2],
+         pch = 16,
+         cex = 0.2,
+         col = scales::alpha("gray50", 0.5))
+  
+  abline(a=0,b=model_slope, col = "black", lwd = 1)
+
+  
+  
+  points(mean_data$X1,
+         mean_data$X2,
+         pch = 24,
+         cex = 1.5,
+         col = "gray10",
+         bg = mean_data$Class)
+
+n_samples_class <- as.numeric(table(mean_data$Class))
+
+n_samples <- max(n_samples_class)
+
+color <- palette()[rep(1:2, each = 10)]
+
+plot(1:n_samples,
+       c(1:n_samples),
+       type = "n",
+       xlab = expression(italic(hat(y)), family = "Helvetica-Oblique"),
+       ylab = "Samples",
+       ylim= c(0,max(n_samples_class)*1.2),
+       xlim = c(-1,1),
+      # yaxt = c(1:max(n_samples_class)),
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1
+  )
+ limits <- global_limits$upper
+  polygon(x = c(limits ,-limits ,-limits ,limits),
+          y = c(80,80,-1,-1),
+          col = "gray90", border = NA)
+  
+  abline(v = 0, col = "black")
+  
+   
+
+    
+     
+    points(global_pred$y_mean,
+           rep(1:10, 2),
+           pch = 24,
+           cex = 1.5,
+           col = "gray10",
+           bg = color)
+
+    curve(dnorm(x, mean = 0, sd = limits/2)/
+           max(dnorm(x, mean = 0, sd = limits/2)),
+         from = -1, to = 1,
+         col = scales::alpha("gray50", 0.5),
+         add = T)
+    box(lwd = 1)
+    
+
+```
