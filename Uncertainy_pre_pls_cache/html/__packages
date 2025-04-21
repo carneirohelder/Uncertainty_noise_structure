@@ -4,3 +4,5 @@ caret
 kernlab
 MASS
 dplyr
+knitr
+kableExtra
