@@ -1,0 +1,589 @@
+---
+title: "2D_simulation_LoD_classification"
+author: "Helder Carneiro"
+date: "2025-04-02"
+output: html_document
+---
+
+This document contains the code for the simulation files and algorithm implementation of the limit of classification.
+
+```{r, warning=F, message=FALSE}
+windowsFonts(A = windowsFont("DejaVu Sans"))
+palette("Tableau10")
+
+library(caret)
+library(kernlab)    
+
+library(MASS)
+ library(plot3D)
+library(dplyr)
+library(pals)
+```
+
+```{r}
+source("predict_with_uncertainty_parallel_v3.R")
+source("predict_noise_confidence_interval.R")
+source("classify_sample_with_limits.R")
+source("simulate_replicate_noise.R")
+```
+
+
+
+
+
+```{r}
+df <- readRDS('Wood_data.rds')
+wvl <- as.numeric(colnames(df[,-c(1:2)]))
+df$Bag <- as.numeric(as.factor(df$Bag))
+df$Sample <- as.numeric(as.factor(df$Sample))
+df <- df[df$Bag %in% c(3,6,7),]
+
+```
+
+```{r}
+df_norm <- df[df$Bag %in% c(3,6),]
+df_norm$Bag <- as.numeric(as.factor(df_norm$Bag))
+df_norm$Sample <- as.numeric(as.factor(df_norm$Sample))
+
+```
+
+```{r}
+df_train <- df_norm
+```
+
+
+```{r}
+center_parameters <- preProcess(df_train[,-c(1:2)], method = "center")
+df_center <- predict(center_parameters, df_train[,-c(1:2)])
+df_center <- data.frame(cbind(df_train[,c(1:2)],df_center ), check.names = F)
+
+```
+
+
+```{r}
+center_parameters <- preProcess(df_train[,-c(1:2)], method = "center")
+df_center <- predict(center_parameters, df_train[,-c(1:2)])
+df_center <- data.frame(cbind(df_train[,c(1:2)],df_center ), check.names = F)
+
+df_center_mean <- aggregate(. ~ Bag + Sample, data = df_center, FUN = mean)
+```
+
+```{r}
+class_dst <- df_norm[df_norm$Bag==1,-c(1,2)]
+class_dst_mean <- colMeans(class_dst)
+class_dst_sd <- apply(class_dst, 2, sd)
+class_dst_var <- apply(class_dst, 2, var)
+
+class_dsp <- df_norm[df_norm$Bag==2,-c(1,2)]
+class_dsp_mean <- colMeans(class_dsp)
+class_dsp_sd <- apply(class_dsp, 2, sd)
+class_dsp_var <- apply(class_dsp, 2, var)
+```
+
+```{r fig.width= 5, fig.height=5, fig.align="center", dpi =900, echo = F, warning=F}
+
+
+layout_matrix <- matrix(c(1,1,
+                          2,3),
+                        nrow = 2,
+                        
+                        byrow = T)
+
+layout(layout_matrix)
+
+op <- par(family = "A")
+par(mgp = c(1.5, 0.5, 0)) 
+par(mar = c(3,3,1,1))
+
+plot(wvl,
+     log(class_dst_mean),
+     type = 'l',
+     xlab = "nm",
+     ylab = "Log Intensity",
+     #ylim = c(-10.5,0)
+     )
+
+lines(wvl, log(class_dst_mean), col = scales::alpha(palette()[4],0.8), lwd = 0.6) 
+lines(wvl, log(class_dst_mean + class_dst_sd), col = scales::alpha(palette()[4],0.4), lty = 2, lwd = 0.5) 
+
+lines(wvl, log(class_dst_mean - class_dst_sd), col = scales::alpha(palette()[4],0.4), lty = 2, lwd = 0.5)  
+
+lines(wvl, log(class_dsp_mean), col = scales::alpha(palette()[6],0.8), lwd = 0.6) 
+lines(wvl, log(class_dsp_mean + class_dsp_sd), col = scales::alpha(palette()[6],0.4), lty = 2, lwd = 0.5) 
+lines(wvl, log(class_dsp_mean - class_dsp_sd), col = scales::alpha(palette()[6],0.4), lty = 2, lwd = 0.5) 
+
+legend("topright",
+           legend = c("Dalbergia stevensonii","Dalbergia spruceana"),
+           text.font = 3,
+           lty = 1,
+           col = palette()[c(4,6)],
+           inset = 0.01,
+           box.lwd = 0.5,
+       cex = 0.75)
+
+
+smoothScatter(log(class_dst_var),
+     log(class_dst_mean),
+     colramp = colorRampPalette(c("blue", "cyan", "green", "yellow", "red")),
+     xlab = "Log variance",
+     ylab = "Log Intensity")
+
+smoothScatter(log(class_dsp_var),
+     log(class_dsp_mean),
+     colramp = colorRampPalette(c("blue", "cyan", "green", "yellow", "red")),
+     xlab = "Log variance",
+     ylab = "Log Intensity")
+# 
+```
+
+```{r fig.width=5, fig.height=5, fig.align="center", dpi =600, echo = F, warning=F}
+png("dst_cor_mesh.png",
+    width = 6,
+    height = 6,
+    units = "in",
+    res = 600)
+
+n_col <- 1000
+jet.colors <- colorRampPalette(c( rep("blue", 10),  rep("cyan", 10), rep("green", 1), rep("yellow", 10), rep("red", 10)))
+
+
+# Subset covariance matrix
+cov_mat <- cor(class_dst[,-c(1:2)])
+step_size <- 50
+cov_mat_small <- cov_mat[seq(1, nrow(cov_mat), by = step_size),
+                         seq(1, ncol(cov_mat), by = step_size)]
+x_small <- wvl[seq(1, nrow(cov_mat), by = step_size)]
+y_small <- x_small
+
+# Set symmetric color limits
+zlim <- max(abs(cov_mat_small))
+col_breaks <- seq(-zlim, zlim, length.out = n_col + 1)
+
+# Plot with forced green center
+persp3D(x = x_small, y = y_small, z = cov_mat_small,
+        colvar = cov_mat_small,
+        col = jet.colors(n_col),
+        colkey = FALSE,     
+        clab = NULL,
+        clim = c(-zlim, zlim),
+        cex.axis = 0.7,
+        lwd = 0.000001, alpha = 0.8,
+        border = NA,
+        theta = 325, phi = 25, expand = 1,
+        ticktype = "detailed",
+        xlab = "nm", ylab = "nm", zlab = "")
+```
+
+
+
+```{r}
+X_simulated_1 <- simulate_replicates_parallel(df_center[1:3,-c(2)], n_sim = 500, ncores = 10)
+```
+
+```{r}
+X_simulated_2 <- simulate_replicates_parallel(df_center[4:6,-c(2)], n_sim = 500, ncores = 10)
+```
+
+```{r}
+X_simulated_3 <- simulate_replicates_parallel(df_center[7:9,-c(2)], n_sim = 500, ncores = 10)
+```
+
+```{r}
+X_simulated_4 <- simulate_replicates_parallel(df_center[10:12,-c(2)], n_sim = 500, ncores = 10)
+```
+
+```{r}
+X_simulated_5 <- simulate_replicates_parallel(df_center[13:15,-c(2)], n_sim = 500, ncores = 10)
+```
+
+```{r}
+X_simulated_6 <- simulate_replicates_parallel(df_center[16:18,-c(2)], n_sim = 500, ncores = 10)
+```
+
+```{r}
+X_simulated_7 <- simulate_replicates_parallel(df_center[19:21,-c(2)], n_sim = 500, ncores = 10)
+```
+
+```{r}
+X_simulated_8 <- simulate_replicates_parallel(df_center[22:24,-c(2)], n_sim = 500, ncores = 10)
+```
+
+```{r}
+X_simulated_9 <- simulate_replicates_parallel(df_center[25:27,-c(2)], n_sim = 500, ncores = 10)
+```
+
+```{r}
+X_simulated_10 <- simulate_replicates_parallel(df_center[28:30,-c(2)], n_sim = 500, ncores = 10)
+```
+
+```{r}
+X_simulated_11 <- simulate_replicates_parallel(df_center[31:32,-c(2)], n_sim = 500, ncores = 10)
+```
+
+```{r}
+X_simulated_12 <- simulate_replicates_parallel(df_center[34:36,-c(2)], n_sim = 500, ncores = 10)
+```
+
+```{r}
+X_simulated <- list('1' = X_simulated_1[[1]],
+                    '2' = X_simulated_2[[1]],
+                    '3' = X_simulated_3[[1]],
+                    '4' = X_simulated_4[[1]],
+                    '5' = X_simulated_5[[1]],
+                    '6' = X_simulated_6[[1]],
+                    '7' = X_simulated_7[[1]],
+                    '8' = X_simulated_8[[1]],
+                    '9' = X_simulated_9[[1]],
+                    '10' = X_simulated_10[[1]],
+                    '11' = X_simulated_11[[1]],
+                    '12' = X_simulated_12[[1]])
+```
+
+
+
+```{r}
+pls_model <- train(y = as.factor(df_center_mean$Bag),
+                   x = df_center_mean[,-c(1:2)], 
+                   method = "pls")
+pls_model
+```
+
+```{r}
+svmP_model <- train(y = as.factor(df_center_mean$Bag),
+                   x = df_center_mean[,-c(1:2)], 
+                   method = "svmPoly")
+svmP_model
+```
+
+```{r}
+svmR_model <- train(y = as.factor(df_center_mean$Bag),
+                   x = df_center_mean[,-c(1:2)], 
+                   method = "svmRadial")
+svmR_model
+```
+
+```{r}
+loc_pred_pls_1 <- predict_with_uncertainty_parallel(df_center[1:15,-c(2)],
+                                              pls_model,
+                                              simulations = X_simulated[1:5],
+                                              )
+loc_pred_pls_2 <- predict_with_uncertainty_parallel(df_center[16:30,-c(2)],
+                                              pls_model,
+                                              simulations = X_simulated[6:10],
+                                              )
+loc_pred_pls_3 <- predict_with_uncertainty_parallel(df_center[31:36,-c(2)],
+                                              pls_model,
+                                              simulations = X_simulated[11:12],
+                                              )
+loc_pred_pls <- rbind(loc_pred_pls_1,
+                      loc_pred_pls_2,
+                      loc_pred_pls_3)
+```
+
+```{r}
+loc_pred_svmP_1 <- predict_with_uncertainty_parallel(df_center[1:15,-c(2)],
+                                              svmP_model,
+                                              simulations = X_simulated[1:5],
+                                              )
+loc_pred_svmP_2 <- predict_with_uncertainty_parallel(df_center[16:30,-c(2)],
+                                              svmP_model,
+                                              simulations = X_simulated[6:10],
+                                              )
+loc_pred_svmP_3 <- predict_with_uncertainty_parallel(df_center[31:36,-c(2)],
+                                              svmP_model,
+                                              simulations = X_simulated[11:12],
+                                              )
+loc_pred_svmP <- rbind(loc_pred_svmP_1,
+                      loc_pred_svmP_2,
+                      loc_pred_svmP_3)
+
+
+```
+
+```{r}
+
+loc_pred_svmR_1 <- predict_with_uncertainty_parallel(df_center[1:15,-c(2)],
+                                              svmR_model,
+                                              simulations = X_simulated[1:5],
+                                              )
+loc_pred_svmR_2 <- predict_with_uncertainty_parallel(df_center[16:30,-c(2)],
+                                              svmR_model,
+                                              simulations = X_simulated[6:10],
+                                              )
+loc_pred_svmR_3 <- predict_with_uncertainty_parallel(df_center[31:36,-c(2)],
+                                              svmR_model,
+                                              simulations = X_simulated[11:12],
+                                              )
+loc_pred_svmR <- rbind(loc_pred_svmR_1,
+                      loc_pred_svmR_2,
+                      loc_pred_svmR_3)
+
+```
+
+```{r}
+
+loc_pred_results <- Reduce(rbind, lapply(loc_pred, function(x) {
+  Reduce(cbind, x[names(x) != "sim_X"])
+}))
+
+colnames(loc_pred_results) <- names(loc_pred[[1]])[-7]
+
+
+loc_pred_results <- data.frame((loc_pred_results))
+loc_pred_results$y_mean <- as.numeric(loc_pred_results$y_mean)
+loc_pred_results$y_sd <- as.numeric(loc_pred_results$y_sd)
+
+```
+
+
+
+
+
+```{r fig.width= 7.5, fig.height=2.5, fig.align="center", dpi =600, echo = F}
+
+
+layout_matrix <- matrix(1:3,
+                        nrow = 1,
+                        byrow = F)
+layout(layout_matrix)
+
+op <- par(family = "A")
+par(mgp = c(1.5, 0.5, 0)) 
+par(mar = c(3,3,1,1))
+
+
+
+n_samples_class <- 6
+
+n_samples <- 6
+
+color <- palette()[rep(c(4,6), each = 6)]
+
+plot(1:n_samples,
+       c(1:n_samples),
+       type = "n",
+       xlab = expression(italic(hat(y)), family = "Helvetica-Oblique"),
+       ylab = "Samples",
+       ylim= c(1,max(n_samples_class)*1.2),
+       xlim = c(-1,1),
+      # yaxt = c(1:max(n_samples_class)),
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1
+  )
+  
+  abline(v = 0, col = "black")
+  
+    up_lim <- loc_pred_pls$y_mean + 2*loc_pred_pls$y_sd
+    bot_lim <- loc_pred_pls$y_mean - 2*loc_pred_pls$y_sd
+
+     
+    arrows(x0 = bot_lim,
+           x1 = up_lim,
+           y0 = rep(1:6, 2),
+           y1 = rep(1:6, 2),
+           col = scales::alpha(color, 0.6),
+           code = 3,
+           angle = 90,
+           length = 0.05)
+     
+    points(loc_pred_pls$y_mean,
+           rep(1:6, 2),
+           pch = 24,
+           cex = 1.5,
+           col = "gray10",
+           bg = color)
+mtext("a", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
+
+plot(1:n_samples,
+       c(1:n_samples),
+       type = "n",
+       xlab = expression(italic(hat(y)), family = "Helvetica-Oblique"),
+       ylab = "Samples",
+       ylim= c(1,max(n_samples_class)*1.2),
+       xlim = c(-5,5),
+      # yaxt = c(1:max(n_samples_class)),
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1
+  )
+  
+  abline(v = 0, col = "black")
+  
+    up_lim <- loc_pred_svmP$y_mean + 2*loc_pred_svmP$y_sd
+    bot_lim <- loc_pred_svmP$y_mean - 2*loc_pred_svmP$y_sd
+
+     
+    arrows(x0 = bot_lim,
+           x1 = up_lim,
+           y0 = rep(1:6, 2),
+           y1 = rep(1:6, 2),
+           col = scales::alpha(color, 0.6),
+           code = 3,
+           angle = 90,
+           length = 0.05)
+     
+    points(loc_pred_svmP$y_mean,
+           rep(1:6, 2),
+           pch = 24,
+           cex = 1.5,
+           col = "gray10",
+           bg = color)
+mtext("b", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
+
+plot(1:n_samples,
+       c(1:n_samples),
+       type = "n",
+       xlab = expression(italic(hat(y)), family = "Helvetica-Oblique"),
+       ylab = "Samples",
+       ylim= c(1,max(n_samples_class)*1.2),
+       xlim = c(-0.5,0.5),
+      # yaxt = c(1:max(n_samples_class)),
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1
+  )
+  
+  abline(v = 0, col = "black")
+  
+    up_lim <- loc_pred_svmR$y_mean + 2*loc_pred_svmR$y_sd
+    bot_lim <- loc_pred_svmR$y_mean - 2*loc_pred_svmR$y_sd
+
+     
+    arrows(x0 = bot_lim,
+           x1 = up_lim,
+           y0 = rep(1:6, 2),
+           y1 = rep(1:6, 2),
+           col = scales::alpha(color, 0.6),
+           code = 3,
+           angle = 90,
+           length = 0.05)
+     
+    points(loc_pred_svmR$y_mean,
+           rep(1:6, 2),
+           pch = 24,
+           cex = 1.5,
+           col = "gray10",
+           bg = color)
+     legend("topright",
+           legend = c("Dalbergia stevensonii","Dalbergia spruceana"), text.font = 3,
+           pch = 24,
+           cex = 0.8,
+           inset = 0.01,
+           box.lwd = 0.5,
+           pt.bg = c(4,6))
+     mtext("c", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
+```
+
+
+
+
+```{r}
+global_limits <- predict_noise_confidence_interval(pls_1,
+                                                   df_center$Sample,
+                                                   n_sim = 500,
+                                                   return_simulations = T)
+```
+
+```{r}
+df_train_mean <- aggregate(.~ Class + Sample, data = df_train, FUN = mean)
+```
+
+```{r}
+df_center_mean <- predict(center_parameters, df_train_mean[,-c(1:2)])
+```
+
+```{r}
+glob_pred <- classify_sample_with_limits(df_center_mean, pls_1, global_limits$upper)
+```
+
+```{r fig.width=12.5, fig.height=2.5, fig.align="center", dpi =900, echo = F}
+
+layout_matrix <- matrix(1:5,
+                        nrow = 1,
+                        byrow = F)
+
+layout(layout_matrix)
+
+op <- par(family = "A")
+par(mgp = c(1.5, 0.5, 0)) 
+par(mar = c(3,3,1,1))
+n_samples_class <- as.numeric(table(df_train_mean$Class))
+
+n_samples <- max(n_samples_class)
+
+color <- palette()[rep(2:1, each = 5)]
+
+plot(pca$x[,1],
+       pca$x[,2],
+       type = 'n',
+       xlim = c(-axis_lim,axis_lim),
+       ylim = c(-axis_lim,axis_lim),
+       xlab = paste0("PC 1 - ", round(explained_variance[1], digits = 2),"%"),
+       ylab = paste0("PC 2 - ", round(explained_variance[2], digits = 2),"%"),
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1)
+  abline(v = 0, h = 0, col = "gray95")
+  
+  points(global_limits[["sim_X"]] %*% as.matrix(pca$rotation[,1]),
+         global_limits[["sim_X"]] %*% as.matrix(pca$rotation[,2]),
+         pch = 16,
+         cex = 0.5,
+         col = scales::alpha("gray50", 0.5))
+  
+  
+  points(pca_mean$PC1,
+         pca_mean$PC2,
+         pch = 24,
+         cex = 1.5,
+         col = "gray10",
+         bg = pca_mean$class_index)
+  
+  
+  
+
+plot(1:n_samples,
+       c(1:n_samples),
+       type = "n",
+       xlab = expression(italic(hat(y)), family = "Helvetica-Oblique"),
+       ylab = "Samples",
+       ylim= c(0,max(n_samples_class)*1.2),
+       xlim = c(-1,1),
+      # yaxt = c(1:max(n_samples_class)),
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1
+  )
+ limits <- global_limits$upper
+  polygon(x = c(limits ,-limits ,-limits ,limits),
+          y = c(80,80,-1,-1),
+          col = "gray90", border = NA)
+  
+  abline(v = 0, col = "black")
+  
+   
+
+    
+     
+    points(glob_pred$y_mean,
+           rep(1:5, 2),
+           pch = 24,
+           cex = 1.5,
+           col = "gray10",
+           bg = color)
+
+    curve(dnorm(x, mean = 0, sd = limits/2)/
+           max(dnorm(x, mean = 0, sd = limits/2)),
+         from = -1, to = 1,
+         col = scales::alpha("gray50", 0.5),
+         add = T)
+    box(lwd = 1)
+
+
+plot.new()
+plot.new()
+plot.new()
+```
+
+

@@ -1,0 +1,689 @@
+---
+title: "Uncertainty estimation of predictions outputs from PLS-DA applied to 2D simulations"
+author: "Helder Carneiro"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: TRUE
+---
+
+## Overview
+
+This Rmarkdown documents contains the code and 2D simulations of the error propagation and classification uncertainty estimation using Monte Carlo simulations for two generic classes with linear separation classified with PLS-DA. 
+
+#### Packages
+
+```{r packages , warning=F, message=FALSE}
+windowsFonts(A = windowsFont("DejaVu Sans")) 
+palette("Tableau10")
+
+library(caret) #classification using train()
+#library(kernlab)    
+library(MASS) #generate the samples and calculate the augmented noise
+library(dplyr) #data handling 
+library(knitr) #knit options for the Rmarkdown report
+library(kableExtra) #table options
+```
+
+#### Local sources files containing the functions
+
+```{r functions, cache=TRUE }
+source("predict_with_uncertainty_parallel_v4.R")
+source("classify_sample_with_limits.R")
+source("plot_functions.R")
+
+```
+
+#### 2D simulations with linear separation pattern
+
+```{r 2D data simulations , cache=TRUE}
+set.seed(1234)
+n_points <- 10  # Number of points per class
+n_replicates <- 5  # Number of replicates 
+noise_sd <- 0.1  # Standard deviation 
+rho <- 0 # Correlation coefficient
+
+# Define the covariance matrix
+cov_matrix <- matrix(c(noise_sd^2, rho * noise_sd^2, 
+                       rho * noise_sd^2, noise_sd^2), nrow = 2)
+
+# Function to generate 2D points with correlated noise
+generate_class <- function(n_points, n_replicates, center_x, center_y, cov_matrix) {
+  points <- matrix(0, nrow = n_points * n_replicates, ncol = 2)
+  
+  for (i in 1:n_points) {
+    base_point <- c(center_x + rnorm(1, 0, 0.2), center_y + rnorm(1, 0, 0.2)) 
+    
+    for (j in 1:n_replicates) {
+      noise <- mvrnorm(1, mu = c(0, 0), Sigma = cov_matrix)  # Correlated noise
+      points[(i - 1) * n_replicates + j, ] <- base_point + noise 
+    }
+  }
+  return(points)
+}
+
+class1 <- generate_class(n_points, n_replicates, center_x = 0.8, center_y = 1.6, cov_matrix)
+class2 <- generate_class(n_points, n_replicates, center_x = 1.3, center_y = 1.2, cov_matrix)
+
+data <- data.frame(
+  Class = factor(rep(c("Class 1", "Class 2"), each = n_points * n_replicates)),
+  Sample_ID = rep(1:(2 * n_points), each = n_replicates),
+  X1 = c(class1[, 1], class2[, 1]),
+  X2 = c(class1[, 2], class2[, 2])
+)
+
+# Mean center the data
+data$X1 <- data$X1 - mean(data$X1)
+data$X2 <- data$X2 - mean(data$X2)
+
+# Calculate the mean and standard deviation of each sample
+mean_data <- aggregate(cbind(X1, X2) ~ Class + Sample_ID, data = data, FUN = mean)
+sd_data <- aggregate(cbind(X1, X2) ~ Class + Sample_ID, data = data, FUN = sd)
+
+rm(class1, class2)
+
+```
+
+#### Fitting the PLS-DA model
+
+```{r PLSDA model fitting, cache = TRUE}
+pls_model <- train(y = mean_data$Class,
+                   x = mean_data[,3:4], 
+                   method = "pls")
+pls_model
+```
+
+## Local uncertainty
+
+The `predict_with_uncertainty_parallel()` function is used to estimate the uncertainty of each sample.
+
+```{r uncertainty estimation, cache = TRUE}
+loc_pred <- predict_with_uncertainty(data[,-1],
+                                                pls_model,
+                                                n_sim = 500,
+                                                return_simulations = T)
+
+```
+
+This function returns the mean and standard deviation of the $\hat{y}$ of each sample based on the Monte Carlo simulation. It also returns the area above and bellow the decision boundary (in this case, zero) of each sample. The classification output indicates if the sample is being classified with certainty or not. For samples where the distribution crosses the decision boundary (considering the 95% confidence level), the sample will be assigned as uncertain. Once `return_simulations = T`, the augmented noise will be saved. The results for this 2D simulated data is displayed in Table 1.
+
+```{r uncertainty results, cache = TRUE, echo = F}
+
+loc_pred_results <- Reduce(rbind, lapply(loc_pred, function(x) {
+  Reduce(cbind, x[names(x) != "sim_X"])
+}))
+
+colnames(loc_pred_results) <- names(loc_pred[[1]])[-7]
+
+
+loc_pred_results <- data.frame(class = mean_data$Class, loc_pred_results)
+loc_pred_results$sample <- rep(1:10, 2)
+
+loc_pred_results$y_mean <- round(as.numeric(loc_pred_results$y_mean), digits = 4)
+loc_pred_results$y_sd <- round(as.numeric(loc_pred_results$y_sd), digits = 4)
+loc_pred_results$area_above_0 <- round(as.numeric(loc_pred_results$area_above_0), digits = 3)
+loc_pred_results$area_below_0 <- round(as.numeric(loc_pred_results$area_below_0), digits = 3)
+
+kable(loc_pred_results,
+      format = 'html',
+      caption = "Table 1. Results of the predict_with_uncertainty_parallel() function. ") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+```
+
+These results can be visualized, as showed in Figure 1.
+
+```{r  fig.width= 7.5, fig.height=2.5, fig.align="center", dpi =300, echo = F, fig.cap= "Figure 1. Uncertainty of the classification outputs for the PLS-DA model. (a) 2D data simulation. Circles represents the replicates, while the triangles represents the mean of replicates. (b) Augmented noise generated through eigen decomposition of the original covariance matrix for each sample. 50 points are showed for each sample. (c) Estimated uncertainty for each sample. "}
+
+layout_matrix <- matrix(1:3,
+                        nrow = 1,
+                        byrow = F)
+
+layout(layout_matrix)
+
+op <- par(family = "A")
+par(mgp = c(1.5, 0.5, 0)) 
+par(mar = c(3,3,1,1))
+
+plot_a(data,mean_data)
+ legend("topright",
+           legend = c("Class 1", "Class 2"),
+           pch = 24,
+           cex = 1,
+           inset = 0.01,
+           box.lwd = 0.5,
+           pt.bg = c(1:2))
+box(lwd = 1)
+mtext("a", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
+
+model <- pls_model
+model_slope <- -model$finalModel$coefficients[1,1,] / model$finalModel$coefficients[2,1,]
+
+plot(data$X1,
+       data$X2,
+       type = 'n',
+       xlim = c(-1,1),
+       ylim = c(-1,1),
+       xlab = "X1", 
+       ylab = "X2",
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1)
+  abline(v = 0, h = 0, col = "gray95")
+  
+  abline(a=0,b=model_slope, col = "black", lwd = 1, lty = 2)
+
+  
+  for (i in 1:nrow(mean_data)){
+    p <- sort(round(runif(250, min = 1, max = 500)))
+    points(loc_pred[[i]][["sim_X"]][p,1],
+         loc_pred[[i]][["sim_X"]][p,2],
+         pch = 16,
+         cex = 0.3,
+         col = scales::alpha(palette()[as.numeric(mean_data$Class)[i]], 0.5))
+    
+    segments(x0=rep(mean_data$X1[i], each = 50),
+             y0=rep(mean_data$X2[i], each = 50),
+             x1=loc_pred[[i]][["sim_X"]][p,1],
+             y1=loc_pred[[i]][["sim_X"]][p,2],
+             col = scales::alpha(palette()[as.numeric(mean_data$Class)[i]], 0.3),
+             lwd = 1)
+  }
+  
+  points(mean_data$X1,
+         mean_data$X2,
+         pch = 24,
+         cex = 1.5,
+         col = "gray10",
+         bg = mean_data$Class)
+  legend("bottomright",
+           legend = c("PLS-DA Boundary"),
+           lty = 2,
+           cex = 0.8,
+           inset = 0.01,
+           box.lwd = 0.5)
+box(lwd = 1)
+mtext("b", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
+
+n_samples_class <- as.numeric(table(mean_data$Class))
+
+n_samples <- max(n_samples_class)
+
+color <- palette()[rep(1:2, each = 10)]
+
+plot(1:n_samples,
+       c(1:n_samples),
+       type = "n",
+       xlab = expression(italic(hat(y)), family = "Helvetica-Oblique"),
+       ylab = "Samples",
+       ylim= c(1,max(n_samples_class)*1.2),
+       xlim = c(-1,1),
+      # yaxt = c(1:max(n_samples_class)),
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1
+  )
+  
+  abline(v = 0, , col = "black", lwd = 1, lty = 2)
+  
+    up_lim <- loc_pred_results$y_mean + 2*loc_pred_results$y_sd
+    bot_lim <- loc_pred_results$y_mean - 2*loc_pred_results$y_sd
+
+     
+    arrows(x0 = bot_lim,
+           x1 = up_lim,
+           y0 = rep(1:10, 2),
+           y1 = rep(1:10, 2),
+           col = scales::alpha(color, 0.6),
+           code = 3,
+           angle = 90,
+           length = 0.05)
+     
+    points(loc_pred_results$y_mean,
+           rep(1:10, 2),
+           pch = 24,
+           cex = 1.5,
+           col = "gray10",
+           bg = color)
+   
+
+mtext("c", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
+
+```
+
+
+
+
+## Correlated noise 
+
+The previous examples showed how the uncertainty was estimated for Independent and Identically Distributed noise (iid noise). The next examples show how the uncertainty can be estimated for correlated noise, easyly found in spectroscopy data.
+
+### Positive covariance
+
+For this example, the covariance between the X1 and X2 is 0.8. The results are showed in Table 2. 
+
+
+```{r 2D data simulations 2 , cache=TRUE, echo = F}
+set.seed(1234)
+n_points <- 10  # Number of points per class
+n_replicates <- 5  # Number of replicates 
+noise_sd <- 0.1  # Standard deviation 
+rho <- 0.8 # Correlation coefficient
+
+# Define the covariance matrix
+cov_matrix <- matrix(c(noise_sd^2, rho * noise_sd^2, 
+                       rho * noise_sd^2, noise_sd^2), nrow = 2)
+
+# Function to generate 2D points with correlated noise
+generate_class <- function(n_points, n_replicates, center_x, center_y, cov_matrix) {
+  points <- matrix(0, nrow = n_points * n_replicates, ncol = 2)
+  
+  for (i in 1:n_points) {
+    base_point <- c(center_x + rnorm(1, 0, 0.2), center_y + rnorm(1, 0, 0.2)) 
+    
+    for (j in 1:n_replicates) {
+      noise <- mvrnorm(1, mu = c(0, 0), Sigma = cov_matrix)  # Correlated noise
+      points[(i - 1) * n_replicates + j, ] <- base_point + noise 
+    }
+  }
+  return(points)
+}
+
+class1 <- generate_class(n_points, n_replicates, center_x = 0.8, center_y = 1.6, cov_matrix)
+class2 <- generate_class(n_points, n_replicates, center_x = 1.3, center_y = 1.2, cov_matrix)
+
+data <- data.frame(
+  Class = factor(rep(c("Class 1", "Class 2"), each = n_points * n_replicates)),
+  Sample_ID = rep(1:(2 * n_points), each = n_replicates),
+  X1 = c(class1[, 1], class2[, 1]),
+  X2 = c(class1[, 2], class2[, 2])
+)
+
+# Mean center the data
+data$X1 <- data$X1 - mean(data$X1)
+data$X2 <- data$X2 - mean(data$X2)
+
+# Calculate the mean and standard deviation of each sample
+mean_data <- aggregate(cbind(X1, X2) ~ Class + Sample_ID, data = data, FUN = mean)
+sd_data <- aggregate(cbind(X1, X2) ~ Class + Sample_ID, data = data, FUN = sd)
+
+rm(class1, class2)
+
+pls_model <- train(y = mean_data$Class,
+                   x = mean_data[,3:4], 
+                   method = "pls")
+
+loc_pred <- predict_with_uncertainty(data[,-1],
+                                                pls_model,
+                                                n_sim = 500,
+                                                return_simulations = T)
+
+
+```
+.
+.
+```{r uncertainty results 2, cache = TRUE, echo = F}
+
+loc_pred_results <- Reduce(rbind, lapply(loc_pred, function(x) {
+  Reduce(cbind, x[names(x) != "sim_X"])
+}))
+
+colnames(loc_pred_results) <- names(loc_pred[[1]])[-7]
+
+
+loc_pred_results <- data.frame(class = mean_data$Class, loc_pred_results)
+loc_pred_results$sample <- rep(1:10, 2)
+
+loc_pred_results$y_mean <- round(as.numeric(loc_pred_results$y_mean), digits = 4)
+loc_pred_results$y_sd <- round(as.numeric(loc_pred_results$y_sd), digits = 4)
+loc_pred_results$area_above_0 <- round(as.numeric(loc_pred_results$area_above_0), digits = 3)
+loc_pred_results$area_below_0 <- round(as.numeric(loc_pred_results$area_below_0), digits = 3)
+
+kable(loc_pred_results,
+      format = 'html',
+      caption = "Table 2. Results of the predict_with_uncertainty_parallel() function for variables with positive covariance. ") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+```
+
+
+
+The results can also be visualized, as showed in Figure 2.
+
+```{r  fig.width= 7.5, fig.height=2.5, fig.align="center", dpi =300, echo = F, fig.cap= "Figure 3. Uncertainty of the classification outputs for the PLS-DA model with positive covariance. (a) 2D data simulation. Circles represents the replicates, while the triangles represents the mean of replicates. (b) Augmented noise generated through eigen decomposition of the original covariance matrix for each sample. 50 points are showed for each sample. (c) Estimated uncertainty for each sample."}
+
+layout_matrix <- matrix(1:3,
+                        nrow = 1,
+                        ncol = 3,
+                        byrow = T)
+
+layout(layout_matrix)
+
+op <- par(family = "A")
+par(mgp = c(1.5, 0.5, 0)) 
+par(mar = c(3,3,1,1))
+
+plot_a(data,mean_data)
+ legend("topright",
+           legend = c("Class 1", "Class 2"),
+           pch = 24,
+           cex = 1,
+           inset = 0.01,
+           box.lwd = 0.5,
+           pt.bg = c(1:2))
+box(lwd = 1)
+mtext("a", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
+
+model <- pls_model
+model_slope <- -model$finalModel$coefficients[1,1,] / model$finalModel$coefficients[2,1,]
+
+plot(data$X1,
+       data$X2,
+       type = 'n',
+       xlim = c(-1,1),
+       ylim = c(-1,1),
+       xlab = "X1", 
+       ylab = "X2",
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1)
+  abline(v = 0, h = 0, col = "gray95")
+  
+  abline(a=0,b=model_slope, col = "black", lwd = 1, lty = 2)
+
+  
+  for (i in 1:nrow(mean_data)){
+    p <- sort(round(runif(250, min = 1, max = 500)))
+    points(loc_pred[[i]][["sim_X"]][p,1],
+         loc_pred[[i]][["sim_X"]][p,2],
+         pch = 16,
+         cex = 0.3,
+         col = scales::alpha(palette()[as.numeric(mean_data$Class)[i]], 0.5))
+    
+    segments(x0=rep(mean_data$X1[i], each = 50),
+             y0=rep(mean_data$X2[i], each = 50),
+             x1=loc_pred[[i]][["sim_X"]][p,1],
+             y1=loc_pred[[i]][["sim_X"]][p,2],
+             col = scales::alpha(palette()[as.numeric(mean_data$Class)[i]], 0.3),
+             lwd = 1)
+  }
+  
+  points(mean_data$X1,
+         mean_data$X2,
+         pch = 24,
+         cex = 1.5,
+         col = "gray10",
+         bg = mean_data$Class)
+  legend("bottomright",
+           legend = c("PLS-DA Boundary"),
+           lty = 2,
+           cex = 0.8,
+           inset = 0.01,
+           box.lwd = 0.5)
+box(lwd = 1)
+mtext("b", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
+
+n_samples_class <- as.numeric(table(mean_data$Class))
+
+n_samples <- max(n_samples_class)
+
+color <- palette()[rep(1:2, each = 10)]
+
+plot(1:n_samples,
+       c(1:n_samples),
+       type = "n",
+       xlab = expression(italic(hat(y)), family = "Helvetica-Oblique"),
+       ylab = "Samples",
+       ylim= c(1,max(n_samples_class)*1.2),
+       xlim = c(-1,1),
+      # yaxt = c(1:max(n_samples_class)),
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1
+  )
+  
+  abline(v = 0, , col = "black", lwd = 1, lty = 2)
+  
+    up_lim <- loc_pred_results$y_mean + 2*loc_pred_results$y_sd
+    bot_lim <- loc_pred_results$y_mean - 2*loc_pred_results$y_sd
+
+     
+    arrows(x0 = bot_lim,
+           x1 = up_lim,
+           y0 = rep(1:10, 2),
+           y1 = rep(1:10, 2),
+           col = scales::alpha(color, 0.6),
+           code = 3,
+           angle = 90,
+           length = 0.05)
+     
+    points(loc_pred_results$y_mean,
+           rep(1:10, 2),
+           pch = 24,
+           cex = 1.5,
+           col = "gray10",
+           bg = color)
+   
+
+mtext("c", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
+
+
+    
+
+```
+
+### Negative Covariance
+
+For this example, the covariance between the X1 and X2 is -0.8. The results are showed in Table 3 and can be visualized in Figure 3.
+
+```{r 2D data simulations 3 , cache=TRUE, echo = F}
+set.seed(1234)
+n_points <- 10  # Number of points per class
+n_replicates <- 5  # Number of replicates 
+noise_sd <- 0.1  # Standard deviation 
+rho <- -0.8 # Correlation coefficient
+
+# Define the covariance matrix
+cov_matrix <- matrix(c(noise_sd^2, rho * noise_sd^2, 
+                       rho * noise_sd^2, noise_sd^2), nrow = 2)
+
+# Function to generate 2D points with correlated noise
+generate_class <- function(n_points, n_replicates, center_x, center_y, cov_matrix) {
+  points <- matrix(0, nrow = n_points * n_replicates, ncol = 2)
+  
+  for (i in 1:n_points) {
+    base_point <- c(center_x + rnorm(1, 0, 0.2), center_y + rnorm(1, 0, 0.2)) 
+    
+    for (j in 1:n_replicates) {
+      noise <- mvrnorm(1, mu = c(0, 0), Sigma = cov_matrix)  # Correlated noise
+      points[(i - 1) * n_replicates + j, ] <- base_point + noise 
+    }
+  }
+  return(points)
+}
+
+class1 <- generate_class(n_points, n_replicates, center_x = 0.8, center_y = 1.6, cov_matrix)
+class2 <- generate_class(n_points, n_replicates, center_x = 1.3, center_y = 1.2, cov_matrix)
+
+data <- data.frame(
+  Class = factor(rep(c("Class 1", "Class 2"), each = n_points * n_replicates)),
+  Sample_ID = rep(1:(2 * n_points), each = n_replicates),
+  X1 = c(class1[, 1], class2[, 1]),
+  X2 = c(class1[, 2], class2[, 2])
+)
+
+# Mean center the data
+data$X1 <- data$X1 - mean(data$X1)
+data$X2 <- data$X2 - mean(data$X2)
+
+# Calculate the mean and standard deviation of each sample
+mean_data <- aggregate(cbind(X1, X2) ~ Class + Sample_ID, data = data, FUN = mean)
+sd_data <- aggregate(cbind(X1, X2) ~ Class + Sample_ID, data = data, FUN = sd)
+
+rm(class1, class2)
+
+pls_model <- train(y = mean_data$Class,
+                   x = mean_data[,3:4], 
+                   method = "pls")
+
+loc_pred <- predict_with_uncertainty(data[,-1],
+                                                pls_model,
+                                                n_sim = 500,
+                                                return_simulations = T)
+
+global_limits <- predict_noise_confidence_interval(data[,2:4],
+                                                   pls_model,
+                                                   n_sim = 500,
+                                                   return_simulations = T)
+
+```
+.
+.
+```{r uncertainty results 3, cache = TRUE, echo = F}
+
+loc_pred_results <- Reduce(rbind, lapply(loc_pred, function(x) {
+  Reduce(cbind, x[names(x) != "sim_X"])
+}))
+
+colnames(loc_pred_results) <- names(loc_pred[[1]])[-7]
+
+
+loc_pred_results <- data.frame(class = mean_data$Class, loc_pred_results)
+loc_pred_results$sample <- rep(1:10, 2)
+
+loc_pred_results$y_mean <- round(as.numeric(loc_pred_results$y_mean), digits = 4)
+loc_pred_results$y_sd <- round(as.numeric(loc_pred_results$y_sd), digits = 4)
+loc_pred_results$area_above_0 <- round(as.numeric(loc_pred_results$area_above_0), digits = 3)
+loc_pred_results$area_below_0 <- round(as.numeric(loc_pred_results$area_below_0), digits = 3)
+
+kable(loc_pred_results,
+      format = 'html',
+      caption = "Table 3. Results of the predict_with_uncertainty_parallel() function for variables with negative covariance. ") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+```
+
+
+
+
+```{r  fig.width= 7.5, fig.height=2.5, fig.align="center", dpi =300, echo = F, fig.cap= "Figure 3. Uncertainty of the classification outputs for the PLS-DA model with negative covariance. (a) 2D data simulation. Circles represents the replicates, while the triangles represents the mean of replicates. (b) Augmented noise generated through eigen decomposition of the original covariance matrix for each sample. 50 points are showed for each sample. (c) Estimated uncertainty for each sample."}
+
+layout_matrix <- matrix(1:3,
+                        nrow = 1,
+                        ncol = 3,
+                        byrow = T)
+
+layout(layout_matrix)
+
+op <- par(family = "A")
+par(mgp = c(1.5, 0.5, 0)) 
+par(mar = c(3,3,1,1))
+
+plot_a(data,mean_data)
+ legend("topright",
+           legend = c("Class 1", "Class 2"),
+           pch = 24,
+           cex = 1,
+           inset = 0.01,
+           box.lwd = 0.5,
+           pt.bg = c(1:2))
+box(lwd = 1)
+mtext("a", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
+
+model <- pls_model
+model_slope <- -model$finalModel$coefficients[1,1,] / model$finalModel$coefficients[2,1,]
+
+plot(data$X1,
+       data$X2,
+       type = 'n',
+       xlim = c(-1,1),
+       ylim = c(-1,1),
+       xlab = "X1", 
+       ylab = "X2",
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1)
+  abline(v = 0, h = 0, col = "gray95")
+  
+  abline(a=0,b=model_slope, col = "black", lwd = 1, lty = 2)
+
+  
+  for (i in 1:nrow(mean_data)){
+    p <- sort(round(runif(250, min = 1, max = 500)))
+    points(loc_pred[[i]][["sim_X"]][p,1],
+         loc_pred[[i]][["sim_X"]][p,2],
+         pch = 16,
+         cex = 0.3,
+         col = scales::alpha(palette()[as.numeric(mean_data$Class)[i]], 0.5))
+    
+    segments(x0=rep(mean_data$X1[i], each = 50),
+             y0=rep(mean_data$X2[i], each = 50),
+             x1=loc_pred[[i]][["sim_X"]][p,1],
+             y1=loc_pred[[i]][["sim_X"]][p,2],
+             col = scales::alpha(palette()[as.numeric(mean_data$Class)[i]], 0.3),
+             lwd = 1)
+  }
+  
+  points(mean_data$X1,
+         mean_data$X2,
+         pch = 24,
+         cex = 1.5,
+         col = "gray10",
+         bg = mean_data$Class)
+  legend("bottomright",
+           legend = c("PLS-DA Boundary"),
+           lty = 2,
+           cex = 0.8,
+           inset = 0.01,
+           box.lwd = 0.5)
+box(lwd = 1)
+mtext("b", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
+
+n_samples_class <- as.numeric(table(mean_data$Class))
+
+n_samples <- max(n_samples_class)
+
+color <- palette()[rep(1:2, each = 10)]
+
+plot(1:n_samples,
+       c(1:n_samples),
+       type = "n",
+       xlab = expression(italic(hat(y)), family = "Helvetica-Oblique"),
+       ylab = "Samples",
+       ylim= c(1,max(n_samples_class)*1.2),
+       xlim = c(-1,1),
+      # yaxt = c(1:max(n_samples_class)),
+       cex.axis = 0.8,
+       col.axis="gray30",
+       cex.lab = 1
+  )
+  
+  abline(v = 0, , col = "black", lwd = 1, lty = 2)
+  
+    up_lim <- loc_pred_results$y_mean + 2*loc_pred_results$y_sd
+    bot_lim <- loc_pred_results$y_mean - 2*loc_pred_results$y_sd
+
+     
+    arrows(x0 = bot_lim,
+           x1 = up_lim,
+           y0 = rep(1:10, 2),
+           y1 = rep(1:10, 2),
+           col = scales::alpha(color, 0.6),
+           code = 3,
+           angle = 90,
+           length = 0.05)
+     
+    points(loc_pred_results$y_mean,
+           rep(1:10, 2),
+           pch = 24,
+           cex = 1.5,
+           col = "gray10",
+           bg = color)
+   
+
+mtext("c", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
+
+
+    
+
+```
+
+
