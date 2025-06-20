@@ -80,4 +80,4 @@ results <- predict_with_uncertainty_parallel(
 
 [2D Polynomial SVM](https://carneirohelder.github.io/Uncertainty_noise_structure/Uncertainy_2D_SVM_poly)
 
-[2D B=RBF SVM](https://carneirohelder.github.io/Uncertainty_noise_structure/Uncertainy_2D_SVM_rbf)
+[2D RBF SVM](https://carneirohelder.github.io/Uncertainty_noise_structure/Uncertainy_2D_SVM_rbf)
