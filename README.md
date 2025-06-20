@@ -4,7 +4,7 @@ This repository provides a set of R functions to quantify uncertainty in predict
 
 ---
 
-## 🔍 Motivation
+## Motivation
 
 In spectroscopy and other analytical techniques, multiple replicate measurements are collected per sample. Instead of simply averaging these replicates, this approach:
 
@@ -15,7 +15,7 @@ In spectroscopy and other analytical techniques, multiple replicate measurements
 
 ---
 
-## 📦 Included Functions
+## Included Functions
 
 ### `predict_with_uncertainty_parallel()`
 
@@ -58,7 +58,7 @@ This output can be passed into `predict_with_uncertainty_parallel(..., simulatio
 
 ---
 
-## ✅ Example Usage
+## Example Usage
 
 ```r
 # Simulate noise structure for each sample
