@@ -77,5 +77,7 @@ results <- predict_with_uncertainty_parallel(
 ## Simulations
 
 [2D PLSDA](https://carneirohelder.github.io/Uncertainty_noise_structure/Uncertainy_2D_PLSDA)
+
 [2D Polynomial SVM](https://carneirohelder.github.io/Uncertainty_noise_structure/Uncertainy_2D_SVM_poly)
+
 [2D B=RBF SVM](https://carneirohelder.github.io/Uncertainty_noise_structure/Uncertainy_2D_SVM_rbf)
