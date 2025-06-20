@@ -73,3 +73,7 @@ results <- predict_with_uncertainty_parallel(
   simulations = sim_noise,
   return_simulations = FALSE
 )
+```
+## Simulations
+
+[2D PLSDA](file:///C:/Users/bookshlab/Documents/GitHub/Uncertainty_noise_structure/Uncertainy_2D_PLSDA.html)
