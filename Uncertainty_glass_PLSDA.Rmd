@@ -179,35 +179,7 @@ persp3D(x = x_small, y = y_small, z = cov_mat_small,
 ```
 
 
-```{r}
-# plot(log(class_ora_var),
-#      log(class_ora_mean),
-#      type = 'p')
-```
-```{r}
-# cor_matrix <- (cov(class_ora_cent))
-```
 
-```{r}
-# n_colors <- 100
-# color_fn <- colorRampPalette(c("blue", "white", "red"))
-# 
-# # Flatten the correlation matrix and scale it to color indices
-# z_vals <- cor_matrix
-# z_scaled <- cut(z_vals, breaks = n_colors)
-# colors <- color_fn(n_colors)[z_scaled]
-# 
-# # Draw the 3D surface
-# persp3d(
-#   x = 1:nrow(z_vals),
-#   y = 1:ncol(z_vals),
-#   z = z_vals,
-#   col = colors,
-#   zlab = "Correlation",
-#   smooth = TRUE,
-#   back = "lines"
-# )
-```
 
 
 
@@ -240,12 +212,12 @@ pls_1 <- train(y = as.factor(df_center_mean$Class),
 
 
 ```{r}
-system.time({
+ 
 loc_pred <- predict_with_uncertainty_parallel(df_center[,-c(1)],
                                               pls_1,
                                               n_sim = 500,
                                               return_simulations = T)
-})
+
 ```
 
 
