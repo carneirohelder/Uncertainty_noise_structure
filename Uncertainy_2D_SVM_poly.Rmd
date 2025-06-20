@@ -31,8 +31,6 @@ library(kableExtra) #table options
 
 ```{r functions, cache=F}
 source("predict_with_uncertainty_parallel_v4.R")
-source("predict_noise_confidence_interval.R")
-source("classify_sample_with_limits.R")
 source("plot_functions.R")
 ```
 

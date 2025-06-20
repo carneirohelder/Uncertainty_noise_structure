@@ -30,7 +30,6 @@ library(kableExtra) #table options
 
 ```{r functions, cache=TRUE }
 source("predict_with_uncertainty_parallel_v4.R")
-source("classify_sample_with_limits.R")
 source("plot_functions.R")
 
 ```
@@ -530,10 +529,6 @@ loc_pred <- predict_with_uncertainty(data[,-1],
                                                 n_sim = 500,
                                                 return_simulations = T)
 
-global_limits <- predict_noise_confidence_interval(data[,2:4],
-                                                   pls_model,
-                                                   n_sim = 500,
-                                                   return_simulations = T)
 
 ```
 .

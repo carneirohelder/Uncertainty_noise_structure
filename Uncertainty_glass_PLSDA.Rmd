@@ -1,5 +1,5 @@
 ---
-title: "2D_simulation_LoD_classification"
+title: "Uncertainty_glass_PLSDA"
 author: "Helder Carneiro"
 date: "2025-04-02"
 output: html_document
@@ -24,7 +24,7 @@ library(rgl)
 
 ```{r functions, cache=TRUE }
 source("predict_with_uncertainty_parallel_v4.R")
-source("classify_sample_with_limits.R")
+
 source("plot_functions.R")
 ```
 
