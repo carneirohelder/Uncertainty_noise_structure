@@ -255,7 +255,7 @@ mtext("c", side = 3, line = -1.8, adj = 0.04, font = 1, cex = 1.5)
 
 ## Correlated noise 
 
-The previous examples showed how the uncertainty was estimated for Independent and Identically Distributed noise (iid noise). The next examples show how the uncertainty can be estimated for correlated noise, easyly found in spectroscopy data.
+The previous examples showed how the uncertainty was estimated for Independent and Identically Distributed noise (iid noise). The next examples show how the uncertainty can be estimated for correlated noise, easily found in spectroscopy data.
 
 ### Positive covariance
 
